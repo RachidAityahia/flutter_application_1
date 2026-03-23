@@ -1,9 +1,78 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
+import 'package:path/path.dart';
 
-/// Flutter code sample for [NavigationBar].
+// Global database reference
+late Database database;
 
-void main() => runApp(const NavigationBarApp());
+class Task {
+  final int id;
+  final String label;
+
+  Task({required this.id, required this.label});
+
+  Map<String, Object?> toMap() {
+    return {'id': id, 'label': label};
+  }
+
+  @override
+  String toString() {
+    return 'Task{id: $id, label: $label}';
+  }
+}
+
+Future<void> insertTask(Task task) async {
+  await database.insert(
+    'tasks',
+    task.toMap(),
+    conflictAlgorithm: ConflictAlgorithm.replace,
+  );
+}
+
+Future<List<Task>> tasks() async {
+  final List<Map<String, Object?>> taskMaps = await database.query('tasks');
+  return [
+    for (final map in taskMaps)
+      Task(id: map['id'] as int, label: map['label'] as String),
+  ];
+}
+
+Future<void> updateTask(Task task) async {
+  await database.update(
+    'tasks',
+    task.toMap(),
+    where: 'id = ?',
+    whereArgs: [task.id],
+  );
+}
+
+Future<void> deleteTask(int id) async {
+  await database.delete('tasks', where: 'id = ?', whereArgs: [id]);
+}
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  if (kIsWeb) {
+    databaseFactory = databaseFactoryFfiWeb;
+  }
+
+  database = await openDatabase(
+    join(await getDatabasesPath(), 'task_database.db'),
+    onCreate: (db, version) {
+      return db.execute(
+        'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT)',
+      );
+    },
+    version: 1,
+  );
+
+  runApp(const NavigationBarApp());
+}
 
 class NavigationBarApp extends StatelessWidget {
   const NavigationBarApp({super.key});
@@ -25,6 +94,20 @@ class _NavigationExampleState extends State<NavigationExample> {
   int currentPageIndex = 0;
   bool light = false;
   var taskText = '';
+  List<Task> _taskList = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTasks();
+  }
+
+  Future<void> _loadTasks() async {
+    final list = await tasks();
+    setState(() {
+      _taskList = list;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -76,11 +159,9 @@ class _NavigationExampleState extends State<NavigationExample> {
                 ElevatedButton.icon(
                   icon: Icon(Icons.add),
                   onPressed: () async {
-                    // final prefs = await SharedPreferences.getInstance();
-
-                    // // Save the counter value to persistent storage under the 'counter' key.
-                    // await prefs.setString('task', taskText);
-                    print('Task added: $taskText');
+                    final task = Task(id: 0, label: taskText);
+                    await insertTask(task);
+                    await _loadTasks();
                   },
                   label: Text('Add Task'),
                 ),
@@ -90,27 +171,21 @@ class _NavigationExampleState extends State<NavigationExample> {
         ),
 
         /// Task List page
-        Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Column(
-            children: <Widget>[
-              Card(
-                child: ListTile(
-                  leading: Icon(Icons.list_alt_sharp),
-                  title: Text('Task 1'),
-                  subtitle: Text('This is a task'),
-                ),
+        _taskList.isEmpty
+            ? const Center(child: Text('No tasks yet'))
+            : ListView.builder(
+                padding: const EdgeInsets.all(8.0),
+                itemCount: _taskList.length,
+                itemBuilder: (context, index) {
+                  final task = _taskList[index];
+                  return Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.list_alt_sharp),
+                      title: Text(task.label),
+                    ),
+                  );
+                },
               ),
-              Card(
-                child: ListTile(
-                  leading: Icon(Icons.notifications_sharp),
-                  title: Text('Notification 2'),
-                  subtitle: Text('This is a notification'),
-                ),
-              ),
-            ],
-          ),
-        ),
 
         /// Messages page
         ListView.builder(
