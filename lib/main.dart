@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Flutter code sample for [NavigationBar].
 
@@ -23,6 +24,7 @@ class NavigationExample extends StatefulWidget {
 class _NavigationExampleState extends State<NavigationExample> {
   int currentPageIndex = 0;
   bool light = false;
+  var taskText = '';
 
   @override
   Widget build(BuildContext context) {
@@ -34,7 +36,7 @@ class _NavigationExampleState extends State<NavigationExample> {
             currentPageIndex = index;
           });
         },
-        indicatorColor: const Color.fromARGB(255, 161, 216, 130),
+        indicatorColor: const Color.fromARGB(255, 193, 178, 233),
         selectedIndex: currentPageIndex,
         destinations: const <Widget>[
           NavigationDestination(
@@ -58,12 +60,31 @@ class _NavigationExampleState extends State<NavigationExample> {
           shadowColor: Colors.transparent,
           margin: const EdgeInsets.all(8.0),
           child: SizedBox.expand(
-            child: TextField(
-              decoration: InputDecoration(
-                labelText: 'Add task',
-                hintText: 'Enter your task here',
-                border: UnderlineInputBorder(),
-              ),
+            child: Column(
+              children: [
+                TextField(
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: 'Add task',
+                    hintText: 'Enter your task here',
+                    border: UnderlineInputBorder(),
+                  ),
+                  onChanged: (text) {
+                    taskText = text;
+                  },
+                ),
+                ElevatedButton.icon(
+                  icon: Icon(Icons.add),
+                  onPressed: () async {
+                    // final prefs = await SharedPreferences.getInstance();
+
+                    // // Save the counter value to persistent storage under the 'counter' key.
+                    // await prefs.setString('task', taskText);
+                    print('Task added: $taskText');
+                  },
+                  label: Text('Add Task'),
+                ),
+              ],
             ),
           ),
         ),
