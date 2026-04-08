@@ -29,7 +29,6 @@ Future<void> insertTask(Task task) async {
   await database.insert(
     'tasks',
     task.toMap(),
-    // conflictAlgorithm: ConflictAlgorithm.replace,
   );
 }
 
