@@ -10,13 +10,13 @@ import 'package:path/path.dart';
 late Database database;
 
 class Task {
-  final int id;
+  final int? id;
   final String label;
 
-  Task({required this.id, required this.label});
+  Task({this.id, required this.label});
 
   Map<String, Object?> toMap() {
-    return {'id': id, 'label': label};
+    return {'label': label, if (id != null) 'id': id};
   }
 
   @override
@@ -29,7 +29,7 @@ Future<void> insertTask(Task task) async {
   await database.insert(
     'tasks',
     task.toMap(),
-    conflictAlgorithm: ConflictAlgorithm.replace,
+    // conflictAlgorithm: ConflictAlgorithm.replace,
   );
 }
 
@@ -42,11 +42,16 @@ Future<List<Task>> tasks() async {
 }
 
 Future<void> updateTask(Task task) async {
+  final id = task.id;
+  if (id == null) {
+    throw ArgumentError('Task id is required for updates.');
+  }
+
   await database.update(
     'tasks',
     task.toMap(),
     where: 'id = ?',
-    whereArgs: [task.id],
+    whereArgs: [id],
   );
 }
 
@@ -79,18 +84,18 @@ class NavigationBarApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(home: NavigationExample());
+    return const MaterialApp(home: Navigation());
   }
 }
 
-class NavigationExample extends StatefulWidget {
-  const NavigationExample({super.key});
+class Navigation extends StatefulWidget {
+  const Navigation({super.key});
 
   @override
-  State<NavigationExample> createState() => _NavigationExampleState();
+  State<Navigation> createState() => _ToDoListState();
 }
 
-class _NavigationExampleState extends State<NavigationExample> {
+class _ToDoListState extends State<Navigation> {
   int currentPageIndex = 0;
   bool light = false;
   var taskText = '';
@@ -105,7 +110,9 @@ class _NavigationExampleState extends State<NavigationExample> {
   Future<void> _loadTasks() async {
     final list = await tasks();
     setState(() {
+      print(list);
       _taskList = list;
+
     });
   }
 
@@ -159,9 +166,15 @@ class _NavigationExampleState extends State<NavigationExample> {
                 ElevatedButton.icon(
                   icon: Icon(Icons.add),
                   onPressed: () async {
-                    final task = Task(id: 0, label: taskText);
+                    final trimmedTask = taskText.trim();
+                    if (trimmedTask.isEmpty) {
+                      return;
+                    }
+
+                    final task = Task(label: trimmedTask);
                     await insertTask(task);
                     await _loadTasks();
+                    taskText = '';
                   },
                   label: Text('Add Task'),
                 ),
@@ -190,42 +203,12 @@ class _NavigationExampleState extends State<NavigationExample> {
         /// Messages page
         ListView.builder(
           reverse: true,
-          itemCount: 2,
-          itemBuilder: (BuildContext context, int index) {
-            if (index == 0) {
-              return Align(
-                alignment: Alignment.centerRight,
-                child: Container(
-                  margin: const EdgeInsets.all(8.0),
-                  padding: const EdgeInsets.all(8.0),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary,
-                    borderRadius: BorderRadius.circular(8.0),
-                  ),
-                  child: Text(
-                    'Hello',
-                    style: theme.textTheme.bodyLarge!.copyWith(
-                      color: theme.colorScheme.onPrimary,
-                    ),
-                  ),
-                ),
-              );
-            }
-            return Align(
-              alignment: Alignment.centerLeft,
-              child: Container(
-                margin: const EdgeInsets.all(8.0),
-                padding: const EdgeInsets.all(8.0),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.primary,
-                  borderRadius: BorderRadius.circular(8.0),
-                ),
-                child: Text(
-                  'Hi!',
-                  style: theme.textTheme.bodyLarge!.copyWith(
-                    color: theme.colorScheme.onPrimary,
-                  ),
-                ),
+          itemCount: _taskList.length,
+          itemBuilder: (context, index) {
+            return Card(
+              child: ListTile(
+                leading: const Icon(Icons.done_outline_sharp),
+                title: Text('Task $index'),
               ),
             );
           },
