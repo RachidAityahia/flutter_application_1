@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:sqflite/sqflite.dart';
@@ -12,16 +10,51 @@ late Database database;
 class Task {
   final int? id;
   final String label;
+  final bool isDone;
 
-  Task({this.id, required this.label});
+  const Task({this.id, required this.label, this.isDone = false});
+
+  factory Task.fromMap(Map<String, Object?> map) {
+    return Task(
+      id: map['id'] as int?,
+      label: map['label'] as String? ?? '',
+      isDone: _sqliteBool(map['isDone']),
+    );
+  }
+
+  static bool _sqliteBool(Object? value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is num) {
+      return value != 0;
+    }
+    if (value is String) {
+      final normalizedValue = value.toLowerCase();
+      return normalizedValue == '1' || normalizedValue == 'true';
+    }
+    return false;
+  }
 
   Map<String, Object?> toMap() {
-    return {'label': label, if (id != null) 'id': id};
+    return {
+      'label': label,
+      'isDone': isDone ? 1 : 0, // SQLite uses 0/1 for booleans
+      if (id != null) 'id': id,
+    };
+  }
+
+  Task copyWith({int? id, String? label, bool? isDone}) {
+    return Task(
+      id: id ?? this.id,
+      label: label ?? this.label,
+      isDone: isDone ?? this.isDone,
+    );
   }
 
   @override
   String toString() {
-    return 'Task{id: $id, label: $label}';
+    return 'Task{id: $id, label: $label, isDone: $isDone}';
   }
 }
 
@@ -34,10 +67,7 @@ Future<void> insertTask(Task task) async {
 
 Future<List<Task>> tasks() async {
   final List<Map<String, Object?>> taskMaps = await database.query('tasks');
-  return [
-    for (final map in taskMaps)
-      Task(id: map['id'] as int, label: map['label'] as String),
-  ];
+  return [for (final map in taskMaps) Task.fromMap(map)];
 }
 
 Future<void> updateTask(Task task) async {
@@ -69,10 +99,10 @@ void main() async {
     join(await getDatabasesPath(), 'task_database.db'),
     onCreate: (db, version) {
       return db.execute(
-        'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT)',
+        'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT, isDone INTEGER)',
       );
     },
-    version: 1,
+    version: 2, // Bumped version to add isDone column
   );
 
   runApp(const NavigationBarApp());
@@ -96,7 +126,6 @@ class Navigation extends StatefulWidget {
 
 class _ToDoListState extends State<Navigation> {
   int currentPageIndex = 0;
-  bool light = false;
   var taskText = '';
   List<Task> _taskList = [];
 
@@ -109,15 +138,19 @@ class _ToDoListState extends State<Navigation> {
   Future<void> _loadTasks() async {
     final list = await tasks();
     setState(() {
-      print(list);
       _taskList = list;
-
     });
+  }
+
+  Future<void> _toggleTask(Task task, bool isDone) async {
+    await updateTask(task.copyWith(isDone: isDone));
+    await _loadTasks();
   }
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
+    final completedTasks = _taskList.where((task) => task.isDone).toList();
+
     return Scaffold(
       bottomNavigationBar: NavigationBar(
         onDestinationSelected: (int index) {
@@ -153,6 +186,7 @@ class _ToDoListState extends State<Navigation> {
               children: [
                 TextField(
                   autofocus: true,
+
                   decoration: InputDecoration(
                     labelText: 'Add task',
                     hintText: 'Enter your task here',
@@ -170,10 +204,11 @@ class _ToDoListState extends State<Navigation> {
                       return;
                     }
 
-                    final task = Task(label: trimmedTask);
+                    final task = Task(label: trimmedTask, isDone: false);
                     await insertTask(task);
-                    await _loadTasks();
                     taskText = '';
+
+                    await _loadTasks();
                   },
                   label: Text('Add Task'),
                 ),
@@ -191,27 +226,67 @@ class _ToDoListState extends State<Navigation> {
                 itemBuilder: (context, index) {
                   final task = _taskList[index];
                   return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.list_alt_sharp),
-                      title: Text(task.label),
+                    child: CheckboxListTile(
+                      value: task.isDone,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      onChanged: (value) async {
+                        if (value == null) {
+                          return;
+                        }
+                        await _toggleTask(task, value);
+                      },
+                      title: Text(
+                        task.label,
+                      ),
+                      secondary: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children:
+                        !task.isDone
+                            ? [IconButton(
+                                icon: const Icon(Icons.edit),
+                                onPressed: () {
+                                  setState(() {
+                                    taskText = task.label;
+                                    currentPageIndex = 0;
+                                  });
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () {
+                                  setState(() {
+                                    deleteTask(task.id!).then((_) => _loadTasks());
+                                  });
+                                },
+                              ),
+                            ]
+                            :[],
+                      ),
                     ),
                   );
                 },
               ),
 
-        /// Messages page
-        ListView.builder(
-          reverse: true,
-          itemCount: _taskList.length,
-          itemBuilder: (context, index) {
-            return Card(
-              child: ListTile(
-                leading: const Icon(Icons.done_outline_sharp),
-                title: Text('Task $index'),
+        /// Done Tasks page
+        completedTasks.isEmpty
+            ? const Center(child: Text('No completed tasks yet'))
+            : ListView.builder(
+                itemCount: completedTasks.length,
+                itemBuilder: (context, index) {
+                  final task = completedTasks[index];
+                  return Card(
+                    child: ListTile(
+                      leading: const Icon(Icons.done_outline_sharp),
+                      title: Text(
+                        task.label,
+                        style: const TextStyle(
+                          // color: Color(0x6A60CD26)
+                        ),
+                      ),
+                    ),
+                  );
+                },
               ),
-            );
-          },
-        ),
       ][currentPageIndex],
     );
   }
