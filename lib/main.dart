@@ -12,24 +12,63 @@ late Database database;
 class Task {
   final int? id;
   final String label;
+  final bool isDone;
+  final String description;
 
-  Task({this.id, required this.label});
+  const Task({
+    this.id,
+    required this.label,
+    this.isDone = false,
+    this.description = '',
+  });
+
+  factory Task.fromMap(Map<String, Object?> map) {
+    return Task(
+      id: map['id'] as int?,
+      label: map['label'] as String? ?? '',
+      isDone: _sqliteBool(map['isDone']),
+    );
+  }
+
+  static bool _sqliteBool(Object? value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is num) {
+      return value != 0;
+    }
+    if (value is String) {
+      final normalizedValue = value.toLowerCase();
+      return normalizedValue == '1' || normalizedValue == 'true';
+    }
+    return false;
+  }
 
   Map<String, Object?> toMap() {
-    return {'label': label, if (id != null) 'id': id};
+    return {
+      'label': label,
+      'isDone': isDone ? 1 : 0, // SQLite uses 0/1 for booleans
+      if (id != null) 'id': id,
+    };
+  }
+
+  Task copyWith({int? id, String? label, bool? isDone, String? description}) {
+    return Task(
+      id: id ?? this.id,
+      label: label ?? this.label,
+      isDone: isDone ?? this.isDone,
+      description: description ?? this.description,
+    );
   }
 
   @override
   String toString() {
-    return 'Task{id: $id, label: $label}';
+    return 'Task{id: $id, label: $label, isDone: $isDone,description: $description}';
   }
 }
 
 Future<void> insertTask(Task task) async {
-  await database.insert(
-    'tasks',
-    task.toMap(),
-  );
+  await database.insert('tasks', task.toMap());
 }
 
 Future<List<Task>> tasks() async {
@@ -58,6 +97,15 @@ Future<void> deleteTask(int id) async {
   await database.delete('tasks', where: 'id = ?', whereArgs: [id]);
 }
 
+class NavigationBarApp extends StatelessWidget {
+  const NavigationBarApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(home: Navigation());
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -72,19 +120,10 @@ void main() async {
         'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT)',
       );
     },
-    version: 1,
+    version: 2,
   );
 
   runApp(const NavigationBarApp());
-}
-
-class NavigationBarApp extends StatelessWidget {
-  const NavigationBarApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return const MaterialApp(home: Navigation());
-  }
 }
 
 class Navigation extends StatefulWidget {
@@ -96,14 +135,21 @@ class Navigation extends StatefulWidget {
 
 class _ToDoListState extends State<Navigation> {
   int currentPageIndex = 0;
-  bool light = false;
-  var taskText = '';
+  final TextEditingController _taskController = TextEditingController();
+  Task? _editingTask;
   List<Task> _taskList = [];
 
   @override
   void initState() {
     super.initState();
+    _taskController.addListener(() => setState(() {}));
     _loadTasks();
+  }
+
+  @override
+  void dispose() {
+    _taskController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadTasks() async {
@@ -111,107 +157,204 @@ class _ToDoListState extends State<Navigation> {
     setState(() {
       print(list);
       _taskList = list;
-
     });
+  }
+
+  Future<void> _toggleTask(Task task, bool isDone) async {
+    await updateTask(task.copyWith(isDone: isDone));
+    await _loadTasks();
+  }
+
+  Future<void> _submitTask() async {
+    final trimmedTask = _taskController.text.trim();
+    if (trimmedTask.isEmpty) {
+      return;
+    }
+
+    final editing = _editingTask;
+    if (editing != null) {
+      await updateTask(editing.copyWith(label: trimmedTask));
+    } else {
+      await insertTask(Task(label: trimmedTask, isDone: false));
+    }
+
+    _taskController.clear();
+    setState(() {
+      _editingTask = null;
+    });
+    await _loadTasks();
   }
 
   @override
   Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Scaffold(
-      bottomNavigationBar: NavigationBar(
-        onDestinationSelected: (int index) {
-          setState(() {
-            currentPageIndex = index;
-          });
-        },
-        indicatorColor: const Color.fromARGB(255, 193, 178, 233),
-        selectedIndex: currentPageIndex,
-        destinations: const <Widget>[
-          NavigationDestination(
-            selectedIcon: Icon(Icons.home),
-            icon: Icon(Icons.home_outlined),
-            label: 'Home',
+    // final completedTasks = _taskList.where((task) => task.isDone).toList();
+
+    final navigationBarWidget = NavigationBar(
+      onDestinationSelected: (int index) {
+        setState(() {
+          currentPageIndex = index;
+        });
+
+        _taskController.clear();
+      },
+      indicatorColor: const Color.fromARGB(255, 193, 178, 233),
+      selectedIndex: currentPageIndex,
+      destinations: const <Widget>[
+        NavigationDestination(
+          selectedIcon: Icon(Icons.home),
+          icon: Icon(Icons.home_outlined),
+          label: 'Home',
+        ),
+        NavigationDestination(
+          icon: Badge(child: Icon(Icons.list_alt_sharp)),
+          label: 'Task List',
+        ),
+        NavigationDestination(
+          icon: Badge(child: Icon(Icons.remove_red_eye_outlined)),
+          label: 'Preview',
+        ),
+      ],
+    );
+
+    final homePageWidget = Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 5),
+      child: Card(
+        shadowColor: Colors.transparent,
+        child: SizedBox.expand(
+          child: Column(
+            children: [
+              TextField(
+                autofocus: true,
+                controller: _taskController,
+                decoration: const InputDecoration(
+                  labelText: 'Add description',
+                  hintText: 'Enter your task here',
+                  border: UnderlineInputBorder(),
+                ),
+                onSubmitted: (_) => _submitTask(),
+              ),
+              TextField(
+                autofocus: true,
+                controller: _taskController,
+                decoration: const InputDecoration(
+                  labelText: 'Add task',
+                  hintText: 'Enter your task here',
+                  border: UnderlineInputBorder(),
+                ),
+                onSubmitted: (_) => _submitTask(),
+              ),
+              ElevatedButton.icon(
+                icon: Icon(_editingTask == null ? Icons.add : Icons.save),
+                onPressed: () async {
+                  _taskController.text.trim().isEmpty ? null : _submitTask();
+
+                  currentPageIndex = 1;
+                },
+                label: Text(_editingTask == null ? 'Add Task' : 'Update Task'),
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Badge(child: Icon(Icons.list_alt_sharp)),
-            label: 'Task List',
+        ),
+      ),
+    );
+
+    final taskListWidget = _taskList.isEmpty
+        ? const Center(child: Text('No tasks yet'))
+        : Container(
+            padding: const EdgeInsets.all(10.0),
+            child: ListView.builder(
+              padding: const EdgeInsets.all(8.0),
+              itemCount: _taskList.length,
+              itemBuilder: (context, index) {
+                final task = _taskList[index];
+                return Card(
+                  child: CheckboxListTile(
+                    value: task.isDone,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    onChanged: (value) async {
+                      if (value == null) {
+                        return;
+                      }
+                      await _toggleTask(task, value);
+                    },
+                    title: Text(task.label),
+                    secondary: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: !task.isDone
+                          ? [
+                              IconButton(
+                                icon: const Icon(Icons.edit),
+                                onPressed: () {
+                                  _taskController.text = task.label;
+                                  setState(() {
+                                    _editingTask = task;
+                                    currentPageIndex = 0;
+                                  });
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete),
+                                onPressed: () {
+                                  deleteTask(
+                                    task.id!,
+                                  ).then((_) => _loadTasks());
+                                },
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.remove_red_eye),
+                                onPressed: () {
+                                  _taskController.text = task.label;
+                                  setState(() {
+                                    currentPageIndex = 2;
+                                  });
+                                },
+                              ),
+                            ]
+                          : [
+                              IconButton(
+                                icon: const Icon(Icons.remove_red_eye),
+                                onPressed: null,
+                              ),
+                            ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+
+    final completedTasksWidget = Container(
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 10),
+      width: 500,
+      child: Column(
+        children: [
+          Image.network('https://picsum.photos/200/300?grayscale'),
+          Text(
+            _taskController.text,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 24,
+              height: 3,
+            ),
           ),
-          NavigationDestination(
-            icon: Badge(child: Icon(Icons.done_outline_sharp)),
-            label: 'Done Tasks',
+          Text(
+            'subtitle subtitle subtitle',
+            style: TextStyle(
+              fontSize: 15,
+              color: Color.fromRGBO(125, 125, 125, 80),
+            ),
           ),
         ],
       ),
+    );
+
+    return Scaffold(
+      bottomNavigationBar: navigationBarWidget,
+
       body: <Widget>[
-        /// Home page
-        Card(
-          shadowColor: Colors.transparent,
-          margin: const EdgeInsets.all(8.0),
-          child: SizedBox.expand(
-            child: Column(
-              children: [
-                TextField(
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    labelText: 'Add task',
-                    hintText: 'Enter your task here',
-                    border: UnderlineInputBorder(),
-                  ),
-                  onChanged: (text) {
-                    taskText = text;
-                  },
-                ),
-                ElevatedButton.icon(
-                  icon: Icon(Icons.add),
-                  onPressed: () async {
-                    final trimmedTask = taskText.trim();
-                    if (trimmedTask.isEmpty) {
-                      return;
-                    }
-
-                    final task = Task(label: trimmedTask);
-                    await insertTask(task);
-                    await _loadTasks();
-                    taskText = '';
-                  },
-                  label: Text('Add Task'),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        /// Task List page
-        _taskList.isEmpty
-            ? const Center(child: Text('No tasks yet'))
-            : ListView.builder(
-                padding: const EdgeInsets.all(8.0),
-                itemCount: _taskList.length,
-                itemBuilder: (context, index) {
-                  final task = _taskList[index];
-                  return Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.list_alt_sharp),
-                      title: Text(task.label),
-                    ),
-                  );
-                },
-              ),
-
-        /// Messages page
-        ListView.builder(
-          reverse: true,
-          itemCount: _taskList.length,
-          itemBuilder: (context, index) {
-            return Card(
-              child: ListTile(
-                leading: const Icon(Icons.done_outline_sharp),
-                title: Text('Task $index'),
-              ),
-            );
-          },
-        ),
+        homePageWidget,
+        taskListWidget,
+        completedTasksWidget,
       ][currentPageIndex],
     );
   }
